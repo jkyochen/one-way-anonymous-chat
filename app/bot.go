@@ -82,7 +82,7 @@ func (b *botClient) recvMsg() {
 
 func (b *botClient) sendMsg(msg []byte, name string, conn *websocket.Conn) {
 
-	nm := tgbotapi.NewMessage(b.chatID, name+string(msg))
+	nm := tgbotapi.NewMessage(b.chatID, name+"\n\n"+string(msg))
 	m, err := b.api.Send(nm)
 	if err != nil {
 		log.Println("sendMsg:", err)
