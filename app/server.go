@@ -23,10 +23,9 @@ func Run() {
 		log.Fatal("input chatID is error")
 	}
 
-	botClient := newBotClient(botToken, int64(chatID))
-	go botClient.recvMsg()
-
 	homeTemplate := template.Must(template.ParseFiles("assets/index.html"))
+	upgrader := websocket.Upgrader{}
+	botClient := newBotClient(botToken, int64(chatID))
 
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		err := homeTemplate.Execute(w, "ws://"+r.Host+"/chat")
@@ -34,8 +33,6 @@ func Run() {
 			log.Panic(err)
 		}
 	})
-
-	upgrader := websocket.Upgrader{}
 
 	http.HandleFunc("/chat", func(w http.ResponseWriter, r *http.Request) {
 		conn, err := upgrader.Upgrade(w, r, nil)

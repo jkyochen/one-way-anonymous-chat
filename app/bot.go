@@ -23,7 +23,10 @@ func newBotClient(token string, chatID int64) *botClient {
 
 	log.Printf("Authorized on account %s", bot.Self.UserName)
 
-	return &botClient{bot, chatID}
+	bc := &botClient{bot, chatID}
+	go bc.recvMsg()
+
+	return bc
 }
 
 type clientMessageRelation struct {
