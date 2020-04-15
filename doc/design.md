@@ -32,6 +32,4 @@
 
 #### 服务端关闭
 
-1. 清理所有 Websocket 连接。
-2. 清理所有用户名与消息 ID 关系。
-3. 清理 Goroutines。
+1. 关闭 Goroutines。

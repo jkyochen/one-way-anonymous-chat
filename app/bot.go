@@ -1,6 +1,9 @@
 package app
 
 import (
+	"os"
+	"strconv"
+
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api"
 	"github.com/gorilla/websocket"
 	"github.com/sirupsen/logrus"
@@ -11,25 +14,35 @@ type clientMessageRelation struct {
 	client *websocket.Conn
 }
 
-var cache = make(map[string]clientMessageRelation)
-
 type botClient struct {
 	api    *tgbotapi.BotAPI
 	chatID int64
+	cache  map[string]clientMessageRelation
 }
 
 func newBotClient(token string, chatID int64) *botClient {
 
 	bot, err := tgbotapi.NewBotAPI(token)
 	if err != nil {
-		logrus.Fatal("input chatID is error", err)
+		logrus.Fatal("input chatID is error: ", err)
 	}
 
-	bot.Debug = false
+	isDebug, err := strconv.ParseBool(os.Getenv("SERVER_DEBUG"))
+	if err != nil {
+		logrus.Fatal("input chatID is error: ", err)
+	}
 
-	logrus.Infof("Authorized on account %s", bot.Self.UserName)
+	if isDebug {
+		bot.Debug = true
+	}
 
-	bc := &botClient{bot, chatID}
+	logrus.Infof("Authorized on account: %s", bot.Self.UserName)
+
+	bc := &botClient{
+		api:    bot,
+		chatID: chatID,
+		cache:  make(map[string]clientMessageRelation, 5),
+	}
 	go bc.recvMsg()
 
 	return bc
@@ -42,11 +55,11 @@ func (b *botClient) recvMsg() {
 
 	updates, err := b.api.GetUpdatesChan(u)
 	if err != nil {
-		logrus.Info("GetUpdatesChan:", err)
+		logrus.Fatal("GetUpdatesChan:", err)
 		return
 	}
 
-	contains := func(msgIds []int, mId int) bool {
+	isContainMsgId := func(msgIds []int, mId int) bool {
 		for _, id := range msgIds {
 			if id == mId {
 				return true
@@ -70,11 +83,11 @@ func (b *botClient) recvMsg() {
 
 		logrus.Infof("[%s] %s", update.Message.From.UserName, update.Message.Text)
 
-		for _, v := range cache {
-			if contains(v.msgIds, replyToMessage.MessageID) {
+		for _, v := range b.cache {
+			if isContainMsgId(v.msgIds, replyToMessage.MessageID) {
 				err := v.client.WriteMessage(websocket.TextMessage, []byte(update.Message.Text))
 				if err != nil {
-					logrus.Error("write:", err)
+					logrus.Error("recvMsg:", err)
 					break
 				}
 			}
@@ -82,41 +95,30 @@ func (b *botClient) recvMsg() {
 	}
 }
 
-func (b *botClient) sendMsg(msg []byte, name string, conn *websocket.Conn) {
+func (b *botClient) sendMsg(msg []byte, name string, conn *websocket.Conn) error {
 
 	nm := tgbotapi.NewMessage(b.chatID, name+"\n\n"+string(msg))
 	m, err := b.api.Send(nm)
 	if err != nil {
 		logrus.Error("sendMsg:", err)
-		return
+		return err
 	}
 
-	if v, ok := cache[name]; ok {
+	if v, ok := b.cache[name]; ok {
 		v.msgIds = append(v.msgIds, m.MessageID)
-		cache[name] = clientMessageRelation{
+		b.cache[name] = clientMessageRelation{
 			msgIds: v.msgIds,
 			client: v.client,
 		}
-		return
+	} else {
+		b.cache[name] = clientMessageRelation{
+			msgIds: []int{m.MessageID},
+			client: conn,
+		}
 	}
-
-	cache[name] = clientMessageRelation{
-		msgIds: []int{m.MessageID},
-		client: conn,
-	}
+	return nil
 }
 
-func cleanCache(name string) {
-	cmr := cache[name]
-
-	// Clean Websocket Conn
-	err := cmr.client.Close()
-	if err != nil {
-		logrus.Error("Clean Cache Websocket Conn Close:", err)
-	}
-
-	// Clean User and MessgeIDs Realtion
-	cmr.msgIds = nil
-
-	delete(cache, name)
+func (b *botClient) cleanCache(name string) {
+	delete(b.cache, name)
 }

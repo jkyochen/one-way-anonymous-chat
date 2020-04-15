@@ -31,18 +31,23 @@ func chatRouter(w http.ResponseWriter, r *http.Request) {
 		logrus.Error("chatRouter:", err)
 		return
 	}
-
-	name := faker.Name()
-	defer cleanCache(name)
 	defer conn.Close()
 
+	name := faker.Name()
+	defer bc.cleanCache(name)
+
 	for {
-		_, message, err := conn.ReadMessage()
+		messageType, message, err := conn.ReadMessage()
 		if err != nil {
 			logrus.Error("read:", err)
-			break
+			return
 		}
-		bc.sendMsg(message, name, conn)
+		if messageType == websocket.TextMessage {
+			err := bc.sendMsg(message, name, conn)
+			if err != nil {
+				return
+			}
+		}
 	}
 }
 
@@ -56,7 +61,7 @@ func load() http.Handler {
 	bc = newBotClient(botToken, int64(chatID))
 
 	router := mux.NewRouter()
-	router.Handle("/", http.HandlerFunc(homeRouter))
-	router.Handle("/chat", http.HandlerFunc(chatRouter))
+	router.HandleFunc("/", homeRouter)
+	router.HandleFunc("/chat", chatRouter)
 	return router
 }
