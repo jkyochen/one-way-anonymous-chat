@@ -1,11 +1,17 @@
 package app
 
 import (
-	"log"
-
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api"
 	"github.com/gorilla/websocket"
+	"github.com/sirupsen/logrus"
 )
+
+type clientMessageRelation struct {
+	msgIds []int
+	client *websocket.Conn
+}
+
+var cache = make(map[string]clientMessageRelation)
 
 type botClient struct {
 	api    *tgbotapi.BotAPI
@@ -16,25 +22,18 @@ func newBotClient(token string, chatID int64) *botClient {
 
 	bot, err := tgbotapi.NewBotAPI(token)
 	if err != nil {
-		log.Panic(err)
+		logrus.Fatal("input chatID is error", err)
 	}
 
 	bot.Debug = false
 
-	log.Printf("Authorized on account %s", bot.Self.UserName)
+	logrus.Infof("Authorized on account %s", bot.Self.UserName)
 
 	bc := &botClient{bot, chatID}
 	go bc.recvMsg()
 
 	return bc
 }
-
-type clientMessageRelation struct {
-	msgIds []int
-	client *websocket.Conn
-}
-
-var cache = make(map[string]clientMessageRelation)
 
 func (b *botClient) recvMsg() {
 
@@ -43,7 +42,7 @@ func (b *botClient) recvMsg() {
 
 	updates, err := b.api.GetUpdatesChan(u)
 	if err != nil {
-		log.Println("GetUpdatesChan:", err)
+		logrus.Info("GetUpdatesChan:", err)
 		return
 	}
 
@@ -69,13 +68,13 @@ func (b *botClient) recvMsg() {
 			continue
 		}
 
-		log.Printf("[%s] %s", update.Message.From.UserName, update.Message.Text)
+		logrus.Infof("[%s] %s", update.Message.From.UserName, update.Message.Text)
 
 		for _, v := range cache {
 			if contains(v.msgIds, replyToMessage.MessageID) {
 				err := v.client.WriteMessage(websocket.TextMessage, []byte(update.Message.Text))
 				if err != nil {
-					log.Println("write:", err)
+					logrus.Error("write:", err)
 					break
 				}
 			}
@@ -88,7 +87,7 @@ func (b *botClient) sendMsg(msg []byte, name string, conn *websocket.Conn) {
 	nm := tgbotapi.NewMessage(b.chatID, name+"\n\n"+string(msg))
 	m, err := b.api.Send(nm)
 	if err != nil {
-		log.Println("sendMsg:", err)
+		logrus.Error("sendMsg:", err)
 		return
 	}
 

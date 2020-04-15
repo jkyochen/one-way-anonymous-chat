@@ -1,60 +1,62 @@
 package app
 
 import (
-	"html/template"
-	"log"
+	"context"
+	"fmt"
 	"net/http"
 	"os"
-	"strconv"
+	"os/signal"
+	"syscall"
+	"time"
 
-	faker "github.com/bxcodec/faker/v3"
-	"github.com/gorilla/websocket"
-
-	// dotenv load .env config to current environment variables
-	_ "github.com/joho/godotenv/autoload"
+	"github.com/sirupsen/logrus"
+	"golang.org/x/sync/errgroup"
 )
 
 // Run server main run
 func Run() {
 
-	botToken := os.Getenv("TELEGRAM_BOT_TOKEN")
-	chatID, err := strconv.Atoi(os.Getenv("TELEGRAM_CHAT_ID"))
-	if err != nil {
-		log.Fatal("input chatID is error")
+	idleConnsClosed := make(chan struct{})
+
+	server := &http.Server{
+		Addr:         fmt.Sprintf(":%s", os.Getenv("SERVER_ADDR")),
+		Handler:      load(),
+		ReadTimeout:  5 * time.Second,
+		WriteTimeout: 10 * time.Second,
 	}
 
-	homeTemplate := template.Must(template.ParseFiles("assets/index.html"))
-	upgrader := websocket.Upgrader{}
-	botClient := newBotClient(botToken, int64(chatID))
+	go func(srv *http.Server) {
+		sigint := make(chan os.Signal, 1)
 
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		err := homeTemplate.Execute(w, "ws://"+r.Host+"/chat")
-		if err != nil {
-			log.Panic(err)
+		// interrupt signal sent from terminal
+		signal.Notify(sigint, os.Interrupt)
+		// sigterm signal sent from kubernetes
+		signal.Notify(sigint, syscall.SIGINT, syscall.SIGTERM)
+		defer signal.Stop(sigint)
+
+		<-sigint
+
+		logrus.Info("received an interrupt signal, shut down the server.")
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		// We received an interrupt signal, shut down.
+		if err := srv.Shutdown(ctx); err != nil {
+			// Error from closing listeners, or context timeout:
+			logrus.Error("HTTP server Shutdown", err)
 		}
+		close(idleConnsClosed)
+	}(server)
+
+	var g errgroup.Group
+
+	g.Go(func() error {
+		logrus.Infof("Starting shorten server on %s", os.Getenv("SERVER_ADDR"))
+		return server.ListenAndServe()
 	})
 
-	http.HandleFunc("/chat", func(w http.ResponseWriter, r *http.Request) {
-		conn, err := upgrader.Upgrade(w, r, nil)
-		if err != nil {
-			log.Println("upgrade:", err)
-			return
-		}
+	if err := g.Wait(); err != nil {
+		logrus.Fatal(err)
+	}
 
-		name := faker.Name()
-		defer cleanCache(name)
-		defer conn.Close()
-
-		for {
-			_, message, err := conn.ReadMessage()
-			if err != nil {
-				log.Println("read:", err)
-				break
-			}
-			botClient.sendMsg(message, name, conn)
-		}
-	})
-
-	addr := os.Getenv("SERVER_ADDR")
-	log.Fatal(http.ListenAndServe(addr, nil))
+	<-idleConnsClosed
 }
