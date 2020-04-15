@@ -107,5 +107,16 @@ func (b *botClient) sendMsg(msg []byte, name string, conn *websocket.Conn) {
 }
 
 func cleanCache(name string) {
+	cmr := cache[name]
+
+	// Clean Websocket Conn
+	err := cmr.client.Close()
+	if err != nil {
+		logrus.Error("Clean Cache Websocket Conn Close:", err)
+	}
+
+	// Clean User and MessgeIDs Realtion
+	cmr.msgIds = nil
+
 	delete(cache, name)
 }
